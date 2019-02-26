@@ -26,12 +26,6 @@ public class UserController {
     @Autowired
     private IUserService iUserService;
 
-    @RequestMapping(value ="hello.do")
-    @ResponseBody
-    public String hello(){
-        return "haha!!!";
-    }
-
     /**
      * 用户登陆方法
      *

@@ -20,4 +20,6 @@ public interface IUserService {
     ServerResponse<String> resetPassword(String passwordOld,String passwordNew,User user);
     ServerResponse<User> updateInformation(User user);
     ServerResponse<User> getInformation(int userId);
+    //判断是否为管理员
+    ServerResponse checkAdminRole(User user);
 }
