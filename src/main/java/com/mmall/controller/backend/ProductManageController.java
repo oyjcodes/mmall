@@ -69,7 +69,7 @@ public class ProductManageController {
     }
 
     //获取商品的信息
-    @RequestMapping(value = "detail.do",method = RequestMethod.POST)
+    @RequestMapping(value = "detail.do")
     public ServerResponse getDetail(HttpSession session,Integer productId){
         User user = (User)session.getAttribute(Const.CURRENT_USER);
         if(user == null) {

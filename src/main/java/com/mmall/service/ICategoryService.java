@@ -21,5 +21,5 @@ public interface ICategoryService {
     public ServerResponse<List<Category>> getChildrenCategoryByParentId(Integer categoryId);
 
     //根据父节点的categoryId，递归查询本节点以及所有子节点的id信息
-    public ServerResponse selectCategoryAndChildById(Integer categoryId);
+    public ServerResponse<List<Integer>> selectCategoryAndChildById(Integer categoryId);
 }
