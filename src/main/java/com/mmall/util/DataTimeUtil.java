@@ -42,11 +42,12 @@ public class DataTimeUtil {
     }
     public static String dateToStr(Date date){
         if(date == null){
-            return StringUtils.EMPTY;
+            return org.apache.commons.lang3.StringUtils.EMPTY;
         }
         DateTime dateTime = new DateTime(date);
         return dateTime.toString(STANDARD_FORMAT);
     }
+
 
     public static void main(String[] args) {
         System.out.println(DataTimeUtil.dateToStr(new Date(),"yyyy-MM-dd"));
