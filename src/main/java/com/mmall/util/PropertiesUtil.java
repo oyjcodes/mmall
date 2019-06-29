@@ -36,6 +36,7 @@ public class PropertiesUtil {
         return value.trim();
     }
 
+    //可以提高代码的健壮性，因为properties中的key有可能被误删，或者被修改，当读取不到时可以用defaultValue代替
     public static String getProperty(String key,String defaultValue){
         String value = props.getProperty(key.trim());
         if(StringUtils.isBlank(value)){
