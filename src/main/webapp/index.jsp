@@ -1,6 +1,11 @@
 <%@ page contentType="text/html;charset=UTF-8" language="java" %>
 <html>
 <body>
+<h2>Tomcat1</h2>
+<h2>Tomcat1</h2>
+<h2>Tomcat1</h2>
+<h2>Tomcat1</h2>
+<h2>Tomcat1</h2>
 <h2>Hello World!</h2>
 <p>springmvc上传文件</p>
 <form name="form1" action="${pageContext.request.contextPath}/manage/product/upload.do" method="post" enctype="multipart/form-data">
