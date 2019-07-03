@@ -49,10 +49,7 @@ public class UserController {
         if (response.isSuccess()) {
            // session.setAttribute(Const.CURRENT_USER, response.getData());
 
-
             CookieUtil.writeLoginToken(httpServletResponse,session.getId());
-            CookieUtil.readLoginToken(httpServletRequest);
-            CookieUtil.delLoginToken(httpServletRequest,httpServletResponse);
             //sessionId:  8FF6EDA78AB9858725B1983298610F8E
             RedisPoolUtil.setEx(session.getId(), JsonUtil.obj2String(response.getData()),Const.RedisCacheExtime.REDIS_SESSION_EXTIME);
         }
