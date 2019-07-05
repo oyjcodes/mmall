@@ -24,6 +24,18 @@
     </filter-mapping>
 
 
+    <!-- 二期新增重置session时间的filter -->
+    <filter>
+        <filter-name>sessionExpireFilter</filter-name>
+        <filter-class>com.mmall.controller.common.SessionExpireFilter</filter-class>
+    </filter>
+    //凡是以do结尾的路径，都会经过这个拦截器，在这个拦截器里面重置session缓存时间
+    <filter-mapping>
+        <filter-name>sessionExpireFilter</filter-name>
+        <url-pattern>*.do</url-pattern>
+    </filter-mapping>
+
+
     <listener>
         <listener-class>org.springframework.web.context.request.RequestContextListener</listener-class>
     </listener>
