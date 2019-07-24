@@ -29,23 +29,24 @@
 
 
     <!-- 二期新增重置session时间的filter -->
-    <!--<filter>-->
-        <!--<filter-name>sessionExpireFilter</filter-name>-->
-        <!--<filter-class>com.mmall.controller.common.SessionExpireFilter</filter-class>-->
-    <!--</filter>-->
-    <!--<filter-mapping>-->
-        <!--<filter-name>sessionExpireFilter</filter-name>-->
-        <!--<url-pattern>*.do</url-pattern>-->
-    <!--</filter-mapping>-->
-
     <filter>
-        <filter-name>springSessionRepositoryFilter</filter-name>
-        <filter-class>org.springframework.web.filter.DelegatingFilterProxy</filter-class>
+        <filter-name>sessionExpireFilter</filter-name>
+        <filter-class>com.mmall.controller.common.SessionExpireFilter</filter-class>
     </filter>
     <filter-mapping>
-        <filter-name>springSessionRepositoryFilter</filter-name>
+        <filter-name>sessionExpireFilter</filter-name>
         <url-pattern>*.do</url-pattern>
     </filter-mapping>
+
+    <!--使用SpringSession实现单点登陆-->
+    <!--<filter>-->
+        <!--<filter-name>springSessionRepositoryFilter</filter-name>-->
+        <!--<filter-class>org.springframework.web.filter.DelegatingFilterProxy</filter-class>-->
+    <!--</filter>-->
+    <!--<filter-mapping>-->
+        <!--<filter-name>springSessionRepositoryFilter</filter-name>-->
+        <!--<url-pattern>*.do</url-pattern>-->
+    <!--</filter-mapping>-->
 
 
     <!--<filter>-->

@@ -15,6 +15,7 @@ import javax.servlet.http.HttpServletResponse;
 import javax.servlet.http.HttpSession;
 
 /**
+ * SpringSession实现单点登陆的测试Controller
  * Created by oyj
  */
 @Controller

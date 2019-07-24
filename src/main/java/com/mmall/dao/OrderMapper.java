@@ -27,4 +27,11 @@ public interface OrderMapper {
 
     List<Order> selectAllOrder();
 
+
+    //二期新增定时关单
+
+    //查询在date日期之前但status还是未付款状态的订单
+    List<Order> selectOrderStatusByCreateTime(@Param("status") Integer status,@Param("date") String date);
+
+    int closeOrderByOrderId(Integer id);
 }

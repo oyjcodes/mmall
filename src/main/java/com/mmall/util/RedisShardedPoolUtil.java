@@ -5,13 +5,13 @@ import lombok.extern.slf4j.Slf4j;
 import redis.clients.jedis.ShardedJedis;
 
 /**
- * @Classname RedisSharedPoolUtil
+ * @Classname RedisShardedPoolUtil
  * @Description redis集群操作工具类
  * @Date 2019/7/6 13:54
  * @Created by oyj
  */
 @Slf4j
-public class RedisSharedPoolUtil {
+public class RedisShardedPoolUtil {
 
     /**
      * 设置key的有效期，单位是秒
@@ -132,18 +132,18 @@ public class RedisSharedPoolUtil {
     public static void main(String[] args) {
         ShardedJedis jedis = RedisShardedPool.getJedis();
 
-        RedisSharedPoolUtil.set("keyTest","value");
+        RedisShardedPoolUtil.set("keyTest","value");
 
-        String value = RedisSharedPoolUtil.get("keyTest");
+        String value = RedisShardedPoolUtil.get("keyTest");
 
-        RedisSharedPoolUtil.setEx("keyex","valueex",60*10);
+        RedisShardedPoolUtil.setEx("keyex","valueex",60*10);
 
-        RedisSharedPoolUtil.expire("keyTest",60*20);
+        RedisShardedPoolUtil.expire("keyTest",60*20);
 
-        RedisSharedPoolUtil.del("keyTest");
+        RedisShardedPoolUtil.del("keyTest");
 
 
-        String aaa = RedisSharedPoolUtil.get(null);
+        String aaa = RedisShardedPoolUtil.get(null);
         System.out.println(aaa);
 
         System.out.println("end");

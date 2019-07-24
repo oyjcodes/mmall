@@ -25,4 +25,8 @@ public interface ProductMapper {
 
     //根据商品名,类型查询所有的商品信息
     List<Product> selectByNameAndCategoryIds(@Param("productName")String productName,@Param("categoryIdList") List<Integer> categoryIdList);
+
+    //这里一定要用Integer，因为int无法为NULL，考虑到很多商品已经删除的情况。
+    Integer selectStockByProductId(Integer id);
+
 }

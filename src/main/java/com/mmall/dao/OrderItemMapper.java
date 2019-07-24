@@ -24,5 +24,6 @@ public interface OrderItemMapper {
 
     //批量插入doing的那详情
     void batchInsert(@Param("orderItemList") List<OrderItem> orderItemList);
+
     List<OrderItem> getByOrderNo(@Param("orderNo")Long orderNo);
 }
