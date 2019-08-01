@@ -1,7 +1,7 @@
 package com.mmall.controller;
 
-import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 /**
  * @Classname HelloController
@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
  * @Date 2019/8/1 17:56
  * @Created by oyj
  */
-@Controller
+@RestController
 public class HelloController {
     @RequestMapping("/hello")
     public String hello(){
