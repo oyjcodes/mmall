@@ -2,11 +2,11 @@
 
 ## 登录购物演示
 
-![](https://github.com/adXiang/miaosha/blob/master/img/buy.gif)
+![](./img/buy.gif)
 
 ## 支付演示
 
-![](https://github.com/adXiang/miaosha/blob/master/img/pay.gif)
+![](./img/pay.gif)
 
 # 服务器情况
 
