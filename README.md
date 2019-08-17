@@ -369,10 +369,9 @@ case2: 试想一下问题2这个场景，当用户进行下单操作，但在规
 
 
 
-### Redis分布式
 
 
-## 分布式算法
+## Redis分布式算法
 
 ### 传统分布式算法：效率低下
 
@@ -414,7 +413,7 @@ CASE2: 某一天我们的业务进行扩展了，假设现在的redis分布式�
 
 <img src="./img/Redis分布式算法2.png">
 
-现在数据对象(Object1~Object4) 和 cache(CacheA~CacheC)都通过同一个hash算法映射到这个hash环形空间中，那么接下来要考虑的就是如何将object映射到cache中
+现在数据对象(Object1 - Object4) 和 cache(CacheA - CacheC)都通过同一个hash算法映射到这个hash环形空间中，那么接下来要考虑的就是如何将object映射到cache中
 
 <img src="./img/Redis分布式算法3.png">
 
@@ -459,11 +458,11 @@ CASE2: 某一天我们的业务进行扩展了，假设现在的redis分布式�
 
  <img src="./img/cj.jpg"><br/>
 
-理想中的hash环形空间中节点A,B,C......的分布如下图,分布的比较均匀
+理想中的hash环形空间中Cache节点A,B,C......的分布如下图,分布的比较均匀
 
 <img src="./img/good.jpg"><br/>
 
-现实中的hash环形空间中节点A,B,C......的分布如下图,分布的不均匀，这样大量的数据就会存储在A节点上，少量的数据才会存储在B、C节点上，这样A节点就会很忙，负载很高，而B、C就会很清闲，造成数据在分布式缓存中的分布不均匀的现象
+现实中的hash环形空间中Cahce节点A,B,C......的分布如下图,分布的不均匀，这样大量的数据就会存储在A节点上，少量的数据才会存储在B、C节点上，这样A节点就会很忙，负载很高，而B、C就会很清闲，造成数据在分布式缓存中的分布不均匀的现象
 
 <img src="./img/bad.jpg"><br/>
 
@@ -486,25 +485,49 @@ CASE2: 某一天我们的业务进行扩展了，假设现在的redis分布式�
 
 #### 虚拟节点
 
-为了解决Hash倾斜性的问题，redis引入了虚拟节点的概念，虚拟节点相当于是实际节点的一个影子或者说分身，而且虚拟节点一般都比实际节点的数量要多（可能一下多好几百倍，这个hash的环上都是密密麻麻的虚拟节点【默认的一个实际redis节点有160个虚拟节点，如果给redis实际节点配置了权重的话（默认权重是1），那虚拟节点的个数就是权重*160】）。引入虚拟节点后，object不再直接映射到实际的cache节点中，而是先映射到虚拟节点中。然后虚拟节点会再进行一个hash计算，最后才映射到实际的cache节点中。所以虚拟节点就是对我们的实际节点进行一个放大，如下图：浅色为虚拟节点，深色为实际节点
+为了解决Hash倾斜性的问题，一致性hash算法引入了虚拟节点，object不再直接映射到实际的cache节点中，而是先映射到虚拟节点中。然后虚拟节点会再进行一个hash计算，最后才映射到实际的cache节点中。所以虚拟节点就是对我们的实际节点进行一个放大，如下图：浅色为虚拟节点，深色为实际节点
 
 <img src="./img/xl.jpg"><br/>
 
 
-数据如何通过存储到实际节点中？(进行两次hash)
+1. 数据如何通过存储到实际节点中？(进行两次hash)
 
-先把对象hash到虚拟节点上，在将虚拟节点重新hash到真是的redis节点上。如下图所示：例如数据对象object1 第一次hash 后映射到虚拟Cache V2上，V2再经过一次hash后映射到真实的Cache节点N1上
+先把对象hash到虚拟节点上，再将虚拟节点重新hash到真实的Cache节点上。如下图所示：例如数据对象object1 第一次hash 后映射到虚拟Cache V2上，V2再经过一次hash后映射到真实的Cache节点N1上
+
+2. 虚拟节点也会有hash倾斜性的问题？
+
+实际情况中，我们可以调整虚拟节点的数量，可以想象，随着虚拟节点的增多，hash环形空间上会分布着密密麻麻的虚拟节点，这样数据就会映射的比较均匀了，这样的话当添加或删除Cache节点，对原始数据的存储分布影响都会很小;
+
+redis中引入了虚拟节点的概念，虚拟节点相当于是实际节点的一个影子或者说分身，而且虚拟节点一般都比实际节点的数量要多，可能一下多好几百倍，这个hash的环上都是密密麻麻的虚拟节点；
+
+默认的一个实际redis节点有160个虚拟节点，如果给redis实际节点配置了权重的话（默认权重是1），那虚拟节点的个数就是权重*160。
+
 
 <img src="./img/Redis分布式算法5.png">
 
 
+### Consistent hashing命中率
+
+ 命中率=(1 - n /(n+m) ) * 100%   (注释：     n = 现有的节点数量；m = 新增的节点数量)
+
+ 按照上面的例子，Cache节点从4个扩充到5个，传统的hash分布式算法命中率为25%；而一致性hash算法的命中率为(1-4/5)*100% = 20%,为什么一致性hash算法的命中率更低呢？
+
+ 那是因为我们的样本数量非常小，当样本数量达到百万级别和千万级的时候，随着我们的分布式集群不断扩大的时候，即m不断变大，命中率会越来越高，即对原始的数据分布影响会越来越小
+
+
 
 ### 封装分布式Shard(分片) Redis API
+
+#### redis分片连接池构建
+
+当业务的数据量非常庞大时，需要考虑将数据存储到多个缓存节点上，如何定位数据应该存储的节点，一般用的是一致性哈希算法。Jedis在客户端角度实现了一致性哈希算法，对数据进行分片，存储到对应的不同的redis实例中。
+
 ```java
+//基于Jedis客户端实现redis分片连接池，Jedis在客户端角度实现了一致性哈希算法，对数据进行分片，存储到对应的不同的redis实例中。
 public class RedisShardedPool {
     //sharded jedis连接池
     private static ShardedJedisPool pool;
-     //最大连接数
+    //最大连接数
     private static Integer maxTotal = Integer.parseInt(PropertiesUtil.getProperty("redis.max.total","20"));
     //在jedispool中最大的idle状态(空闲的)的jedis实例的个数
     private static Integer maxIdle = Integer.parseInt(PropertiesUtil.getProperty("redis.max.idle","20"));
@@ -517,6 +540,7 @@ public class RedisShardedPool {
 
     private static String redis1Ip = PropertiesUtil.getProperty("redis1.ip");
     private static Integer redis1Port = Integer.parseInt(PropertiesUtil.getProperty("redis1.port"));
+
     private static String redis2Ip = PropertiesUtil.getProperty("redis2.ip");
     private static Integer redis2Port = Integer.parseInt(PropertiesUtil.getProperty("redis2.port"));
 
@@ -544,6 +568,7 @@ public class RedisShardedPool {
         jedisShardInfoList.add(info1);
         jedisShardInfoList.add(info2);
 
+        // Redis的分片策略：MURMUR_HASH(默认，对应的就是一致性算法)、MD5
         pool = new ShardedJedisPool(config,jedisShardInfoList, Hashing.MURMUR_HASH, Sharded.DEFAULT_KEY_TAG_PATTERN);
     }
 
@@ -565,7 +590,339 @@ public class RedisShardedPool {
     public static void returnResource(ShardedJedis jedis){
         pool.returnResource(jedis);
     }
+}
 ```
+
+
+### Redis分片源码解析
+
+
+
+Jedis对Sharded的实现主要是在JedisShardInfo.java、ShardedJedis.java和ShardedJedisPool.java中。
+
+<img src="./img/code1.jpg">
+
+
+#### JedisShardInfo.java
+
+JedisShardInfo包含了一个redis节点主机号，端口号，名称，密码等相关信息,即一个JedisShardedInfo类代表一个数据分片的主体
+```java
+public class JedisShardInfo extends ShardInfo<Jedis> {
+    private int timeout;
+    private String host;
+    private int port;
+    private String password;
+    private String name;
+
+    public JedisShardInfo(String host, int port, int timeout, int weight) {
+        super(weight);
+        this.password = null;
+        this.name = null;
+        this.host = host;
+        this.port = port;
+        this.timeout = timeout;
+    }
+}
+
+```
+
+
+#### ShardedJedis.java
+
+要构造一个ShardedJedis，需提供一个或多个JedisShardInfo(分片实体),指定数据分片算法，指定分片算法所依据的key的形式
+
+
+构造函数中的三个主要的参数
+
+shards
+一个JedisShardInfo的列表，一个JedisShardedInfo类代表一个数据分片的主体
+
+algo
+数据分片算法
+
+keyTagPattern
+自定义分片算法所依据的key的形式。例如，可以不针对整个key的字符串做哈希计算，而是类似对thisisa{key}中包含在大括号内的字符串进行哈希计算
+
+
+```java
+
+public class ShardedJedis extends BinaryShardedJedis implements JedisCommands, Closeable {
+    protected Pool<ShardedJedis> dataSource = null;
+
+    public ShardedJedis(List<JedisShardInfo> shards) {
+        super(shards);
+    }
+
+    public ShardedJedis(List<JedisShardInfo> shards, Hashing algo) {
+        super(shards, algo);
+    }
+
+    public ShardedJedis(List<JedisShardInfo> shards, Pattern keyTagPattern) {
+        super(shards, keyTagPattern);
+    }
+
+    public ShardedJedis(List<JedisShardInfo> shards, Hashing algo, Pattern keyTagPattern) {
+        super(shards, algo, keyTagPattern);
+    }
+}
+
+```
+
+#### ShardedJedisPool.java
+
+分片连接池的构建需要3个参数：连接配置策略、数据分片的主体列表、数据分片算法、自定义分片算法所依据的key的形式；通过调用ShardedJedisPool对象的getResource()方法得到ShardedJedis对象
+
+ShardedJedisPool pool = new ShardedJedisPool(config,jedisShardInfoList, Hashing.MURMUR_HASH, Sharded.DEFAULT_KEY_TAG_PATTERN);
+
+```java
+public class ShardedJedisPool extends Pool<ShardedJedis> {
+    public ShardedJedisPool(GenericObjectPoolConfig poolConfig, List<JedisShardInfo> shards) {
+        this(poolConfig, shards, Hashing.MURMUR_HASH);
+    }
+
+    public ShardedJedisPool(GenericObjectPoolConfig poolConfig, List<JedisShardInfo> shards, Hashing algo) {
+        this(poolConfig, shards, algo, (Pattern)null);
+    }
+
+    public ShardedJedisPool(GenericObjectPoolConfig poolConfig, List<JedisShardInfo> shards, Pattern keyTagPattern) {
+        this(poolConfig, shards, Hashing.MURMUR_HASH, keyTagPattern);
+    }
+
+    public ShardedJedisPool(GenericObjectPoolConfig poolConfig, List<JedisShardInfo> shards, Hashing algo, Pattern keyTagPattern) {
+        super(poolConfig, new ShardedJedisPool.ShardedJedisFactory(shards, algo, keyTagPattern));
+    }
+
+    public ShardedJedis getResource() {
+        ShardedJedis jedis = (ShardedJedis)super.getResource();
+        jedis.setDataSource(this);
+        return jedis;
+    }
+
+```
+
+
+#### 哈希环的初始化(Sharded.java)
+
+Sharded类维护了TreeMap、LinkedHashMap
+
+TreeMap
+
+基于红黑树实现，用来存放经过一致性哈希计算后的redis节点，
+
+LinkedHashMap
+
+
+
+定位的流程如下：
+
+先在TreeMap中找到对应key所对应的ShardInfo，然后通过ShardInfo在LinkedHashMap中找到对应的Jedis实例
+
+可以看到，它对每一个ShardInfo通过一定规则计算其哈希值，然后存到TreeMap中，这里它实现了一致性哈希算法中虚拟节点的概念，因为我们可以看到同一个ShardInfo不止一次被放到TreeMap中，数量是，权重*160。
+
+增加了虚拟节点的一致性哈希有很多好处，比如能避免数据在redis节点间分布不均匀
+
+然后，
+
+
+```java
+public class Sharded<R, S extends ShardInfo<R>> {
+    public static final int DEFAULT_WEIGHT = 1;
+    private TreeMap<Long, S> nodes;
+    private final Hashing algo;
+    private final Map<ShardInfo<R>, R> resources ;
+    private Pattern tagPattern;
+    public static final Pattern DEFAULT_KEY_TAG_PATTERN = Pattern.compile("\\{(.+?)\\}");
+
+    public Sharded(List<S> shards, Hashing algo, Pattern tagPattern) {
+        //用来保存ShardInfo与Jedis实例的对应关系。
+        this.resources = new LinkedHashMap();
+        this.tagPattern = null;
+        this.algo = algo;
+        this.tagPattern = tagPattern;
+        this.initialize(shards);
+    }
+    private void initialize(List<S> shards) {
+            this.nodes = new TreeMap();
+
+            for(int i = 0; i != shards.size(); ++i) {
+                S shardInfo = (ShardInfo)shards.get(i);
+                int n;
+                if (shardInfo.getName() == null) {
+                    for(n = 0; n < 160 * shardInfo.getWeight(); ++n) {
+                        this.nodes.put(this.algo.hash("SHARD-" + i + "-NODE-" + n), shardInfo);
+                    }
+                } else {
+                    for(n = 0; n < 160 * shardInfo.getWeight(); ++n) {
+                        this.nodes.put(this.algo.hash(shardInfo.getName() + "*" + shardInfo.getWeight() + n), shardInfo);
+                    }
+                }
+                //在LinkedHashMap中放入ShardInfo以及其对应的Jedis实例，通过调用其自身的createSource()来得到jedis实例
+                this.resources.put(shardInfo, shardInfo.createResource());
+            }
+
+     }
+
+    //可以看到，先通过getShardInfo方法从TreeMap中获得对应的ShardInfo，然后根据这个ShardInfo就能够再LinkedHashMap中获得对应的Jedis实例了
+    public R getShard(byte[] key) {
+        return this.resources.get(this.getShardInfo(key));
+    }
+
+    public R getShard(String key) {
+        return this.resources.get(this.getShardInfo(key));
+    }
+
+    public S getShardInfo(byte[] key) {
+        SortedMap<Long, S> tail = this.nodes.tailMap(this.algo.hash(key));
+        return tail.isEmpty() ? (ShardInfo)this.nodes.get(this.nodes.firstKey()) : (ShardInfo)tail.get(tail.firstKey());
+    }
+
+    public S getShardInfo(String key) {
+        return this.getShardInfo(SafeEncoder.encode(this.getKeyTag(key)));
+    }
+
+    public String getKeyTag(String key) {
+        if (this.tagPattern != null) {
+            Matcher m = this.tagPattern.matcher(key);
+            if (m.find()) {
+                return m.group(1);
+            }
+        }
+
+        return key;
+    
+}
+```
+
+
+
+#### 基于Redis分片连接池创建工具类
+
+```java
+
+public class RedisShardedPoolUtil {
+
+    public static Long expire(String key,int exTime){
+        ShardedJedis jedis = null;
+        Long result = null;
+        try {
+            jedis = RedisShardedPool.getJedis();
+            result = jedis.expire(key,exTime);
+        } catch (Exception e) {
+            log.error("expire key:{} error",key,e);
+            RedisShardedPool.returnBrokenResource(jedis);
+            return result;
+        }
+        RedisShardedPool.returnResource(jedis);
+        return result;
+    }
+
+    //exTime的单位是秒
+    public static String setEx(String key,String value,int exTime){
+        ShardedJedis jedis = null;
+        String result = null;
+        try {
+            jedis = RedisShardedPool.getJedis();
+            result = jedis.setex(key,exTime,value);
+        } catch (Exception e) {
+            log.error("setex key:{} value:{} error",key,value,e);
+            RedisShardedPool.returnBrokenResource(jedis);
+            return result;
+        }
+        RedisShardedPool.returnResource(jedis);
+        return result;
+    }
+
+    public static String set(String key,String value){
+        ShardedJedis jedis = null;
+        String result = null;
+
+        try {
+            jedis = RedisShardedPool.getJedis();
+            result = jedis.set(key,value);
+        } catch (Exception e) {
+            log.error("set key:{} value:{} error",key,value,e);
+            RedisShardedPool.returnBrokenResource(jedis);
+            return result;
+        }
+        RedisShardedPool.returnResource(jedis);
+        return result;
+    }
+
+    public static String getSet(String key,String value){
+        ShardedJedis jedis = null;
+        String result = null;
+
+        try {
+            jedis = RedisShardedPool.getJedis();
+            result = jedis.getSet(key,value);
+        } catch (Exception e) {
+            log.error("getset key:{} value:{} error",key,value,e);
+            RedisShardedPool.returnBrokenResource(jedis);
+            return result;
+        }
+        RedisShardedPool.returnResource(jedis);
+        return result;
+    }
+
+    public static String get(String key){
+        ShardedJedis jedis = null;
+        String result = null;
+        try {
+            jedis = RedisShardedPool.getJedis();
+            result = jedis.get(key);
+        } catch (Exception e) {
+            log.error("get key:{} error",key,e);
+            RedisShardedPool.returnBrokenResource(jedis);
+            return result;
+        }
+        RedisShardedPool.returnResource(jedis);
+        return result;
+    }
+
+    public static Long del(String key){
+        ShardedJedis jedis = null;
+        Long result = null;
+        try {
+            jedis = RedisShardedPool.getJedis();
+            result = jedis.del(key);
+        } catch (Exception e) {
+            log.error("del key:{} error",key,e);
+            RedisShardedPool.returnBrokenResource(jedis);
+            return result;
+        }
+        RedisShardedPool.returnResource(jedis);
+        return result;
+    }
+
+    public static Long setnx(String key,String value){
+        ShardedJedis jedis = null;
+        Long result = null;
+
+        try {
+            jedis = RedisShardedPool.getJedis();
+            result = jedis.setnx(key,value);
+        } catch (Exception e) {
+            log.error("setnx key:{} value:{} error",key,value,e);
+            RedisShardedPool.returnBrokenResource(jedis);
+            return result;
+        }
+        RedisShardedPool.returnResource(jedis);
+        return result;
+    }
+
+```
+
+### 集群和分布式的区别？
+
+集群：是一种物理形态，同一个业务，部署在多个服务器上，tomcat一般称为集群
+
+分布式：是一种工作的方式，一个业务分拆多个子业务，部署在不同的服务器上
+
+举例说明：
+
+小饭店原来只有一个厨师，切菜洗菜备料炒菜全干。后来客人多了，厨房一个厨师忙不过来，又请了个厨师，两个厨师都能炒一样的菜，这两个厨师的关系是集群。
+
+为了让厨师专心炒菜，把菜做到极致，又请了个配菜师负责切菜，备菜，备料，厨师和配菜师的关系是分布式，一个配菜师也忙不过来了，又请了个配菜师，两个配菜师关系是集群
 
 
 ### 单点登陆SSO（Single Sign On）的实现
@@ -701,6 +1058,254 @@ web.xml
 
 ### 解决方法
 回答问题答案正确时将token保存到redis中,修改密码的时候从redis中读取，和前端传来的token进行匹配，如果匹配成功则修改密码，否者不修改。
+
+```Java
+@Override
+    public ServerResponse<String> checkAnswer(String username, String question, String answer) {
+        int resultCount = userMapper.checkAnswer(username, question, answer);
+        if (resultCount > 0) {
+            //说明问题及问题答案是该用户的，并且是正确的
+            String forgetToken = UUID.randomUUID().toString();
+            // 一期：token 放入本地缓存（存在集群之后的隐患） 二期：放入 Redis 中。
+            RedisShardedPoolUtil.setEx(Const.TOKEN_PREFIX + username, forgetToken,60*60*12);
+            return ServerResponse.createBySuccess(forgetToken);
+        }
+        return ServerResponse.createByErrorMessage("问题答案错误");
+    }
+```
+
+```Java
+@Override
+    public ServerResponse<String> forgetResetPassword(String username, String passwordNew, String forgetToken) {
+        if (StringUtils.isBlank(forgetToken)) {
+            ServerResponse.createByErrorMessage("参数传递错误，Token需要传递");
+        }
+        int resultCount = userMapper.checkUsername(username);
+        if (resultCount == 0) {
+            return ServerResponse.createByErrorMessage("用户名不存在");
+        }
+
+        String token = RedisShardedPoolUtil.get(Const.TOKEN_PREFIX + username);
+        if (StringUtils.isBlank(token)) {
+            return ServerResponse.createByErrorMessage("token无效或过期");
+        }
+        if (StringUtils.equals(forgetToken, token)) {
+            String md5Password = MD5Util.MD5EncodeUtf8(passwordNew);
+            int rowCount = userMapper.updatePasswordByUsername(username, md5Password);
+
+            if (rowCount > 0) {
+                return ServerResponse.createBySuccessMsg("修改密码成功");
+            }
+        } else {
+            return ServerResponse.createByErrorMessage("token获取错误，请重新 获取重置密码的token");
+        }
+        return ServerResponse.createByErrorMessage("修改密码失败");
+    }
+```
+
+## SpringSession实现单点登陆
+
+原始的手写单点登陆方法对业务是由入侵的，如果希望减轻对业务的入侵，可采用这种方式
+
+1. SpringSession提供了一套创建和管理Servlet、HttpSession的方案
+2. 提供了集群Session的功能
+3. 默认采用外置的redis来存储session数据，以此来解决session共享的问题。
+
+
+
+
+## SpringMVC 全局异常
+
+
+<img src="https://raw.githubusercontent.com/xiehanghang/mmall/master/README-img/SpringMVC%E5%85%A8%E5%B1%80%E5%BC%82%E5%B8%B81.png">
+
+
+
+<img src="https://raw.githubusercontent.com/xiehanghang/mmall/master/README-img/SpringMVC%E5%85%A8%E5%B1%80%E5%BC%82%E5%B8%B82.png">
+
+
+
+项目细节会被看到
+
+
+
+<img src="https://raw.githubusercontent.com/xiehanghang/mmall/master/README-img/SpringMVC%E5%85%A8%E5%B1%80%E5%BC%82%E5%B8%B83.png">
+
+
+
+### 扫描包隔离
+
+**交给 springmvc 来扫描 controller**
+
+只扫描 controller，关闭默认的扫描
+
+```
+<!-- springmvc 扫描包指定到 controller，防止重复扫描 -->
+    <context:component-scan base-package="com.mmall.controller" annotation-config="true" use-default-filters="false">
+        <context:include-filter type="annotation" expression="org.springframework.stereotype.Controller"/>
+    </context:component-scan>
+```
+
+### 具体实现
+
+```java
+@Slf4j
+@Component
+public class ExceptionResolver implements HandlerExceptionResolver{
+
+    @Override
+    public ModelAndView resolveException(HttpServletRequest httpServletRequest, HttpServletResponse httpServletResponse, Object o, Exception e) {
+        log.error("{} Exception",httpServletRequest.getRequestURI(),e);
+        ModelAndView modelAndView = new ModelAndView(new MappingJacksonJsonView());
+
+        //当使用是jackson2.x的时候使用MappingJackson2JsonView，课程中使用的是1.9。
+        modelAndView.addObject("status", ResponseCode.ERROR.getCode());
+        modelAndView.addObject("msg","接口异常,详情请查看服务端日志的异常信息");
+        modelAndView.addObject("data",e.toString());
+        return modelAndView;
+    }
+
+}
+```
+
+
+
+## SpringMVC 实现权限统一校验
+
+解决问题：大量的重复代码：校验用户是否登录
+
+```xml
+<mvc:interceptors>
+        <!-- 定义在这里的，所有的都会拦截-->
+        <mvc:interceptor>
+            <!--manage/a.do  /manage/*-->
+            <!--manage/b.do  /manage/*-->
+            <!--manage/product/save.do /manage/**-->
+            <!--manage/order/detail.do /manage/**-->
+            <mvc:mapping path="/manage/**"/>
+            <!--<mvc:exclude-mapping path="/manage/user/login.do"/>-->
+            <bean class="com.mmall.controller.common.interceptor.AuthorityInterceptor" />
+        </mvc:interceptor>
+    </mvc:interceptors>
+```
+
+
+
+### 具体拦截器实现
+
+```Java
+/**
+ * Created by geely
+ */
+@Slf4j
+public class AuthorityInterceptor implements HandlerInterceptor {
+
+    @Override
+    public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+        log.info("preHandle");
+        //请求中Controller中的方法名
+        HandlerMethod handlerMethod = (HandlerMethod) handler;
+
+        //解析HandlerMethod
+
+        String methodName = handlerMethod.getMethod().getName();
+        String className = handlerMethod.getBean().getClass().getSimpleName();
+
+        //解析参数,具体的参数key以及value是什么，我们打印日志
+        StringBuffer requestParamBuffer = new StringBuffer();
+        Map paramMap = request.getParameterMap();
+        Iterator it = paramMap.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry entry = (Map.Entry) it.next();
+            String mapKey = (String) entry.getKey();
+
+            String mapValue = StringUtils.EMPTY;
+
+            //request这个参数的map，里面的value返回的是一个String[]
+            Object obj = entry.getValue();
+            if (obj instanceof String[]) {
+                String[] strs = (String[]) obj;
+                mapValue = Arrays.toString(strs);
+            }
+            requestParamBuffer.append(mapKey).append("=").append(mapValue);
+        }
+
+        if (StringUtils.equals(className, "UserManageController") && StringUtils.equals(methodName, "login")) {
+            log.info("权限拦截器拦截到请求,className:{},methodName:{},param:{}", className, methodName, requestParamBuffer);
+            //如果是拦截到登录请求，不打印参数，因为参数里面有密码，全部会打印到日志中，防止日志泄露
+            return true;
+        }
+
+        log.info("权限拦截器拦截到请求,className:{},methodName:{},param:{}", className, methodName, requestParamBuffer.toString());
+
+
+        User user = null;
+
+        String loginToken = CookieUtil.readLoginToken(request);
+        if (StringUtils.isNotEmpty(loginToken)) {
+            String userJsonStr = RedisShardedPoolUtil.get(loginToken);
+            user = JsonUtil.string2Obj(userJsonStr, User.class);
+        }
+
+        if (user == null || (user.getRole().intValue() != Const.Role.ROLE_ADMIN)) {
+            //返回false.即不会调用controller里的方法
+            response.reset();//geelynote 这里要添加reset，否则报异常 getWriter() has already been called for this response.
+            response.setCharacterEncoding("UTF-8");//geelynote 这里要设置编码，否则会乱码
+            response.setContentType("application/json;charset=UTF-8");// 这里要设置返回值的类型，因为全部是json接口。
+
+            PrintWriter out = response.getWriter();
+
+            //上传由于富文本的控件要求，要特殊处理返回值，这里面区分是否登录以及是否有权限
+            if (user == null) {
+                if (StringUtils.equals(className, "ProductManageController") && StringUtils.equals(methodName, "richtextImgUpload")) {
+                    Map resultMap = Maps.newHashMap();
+                    resultMap.put("success", false);
+                    resultMap.put("msg", "请登录管理员");
+                    out.print(JsonUtil.obj2String(resultMap));
+                } else {
+                    out.print(JsonUtil.obj2String(ServerResponse.createByErrorMessage("拦截器拦截,用户未登录")));
+                }
+            } else {
+                if (StringUtils.equals(className, "ProductManageController") && StringUtils.equals(methodName, "richtextImgUpload")) {
+                    Map resultMap = Maps.newHashMap();
+                    resultMap.put("success", false);
+                    resultMap.put("msg", "无权限操作");
+                    out.print(JsonUtil.obj2String(resultMap));
+                } else {
+                    out.print(JsonUtil.obj2String(ServerResponse.createByErrorMessage("拦截器拦截,用户无权限操作")));
+                }
+            }
+            out.flush();
+            out.close();//这里要关闭
+
+            return false;
+
+        }
+        return true;
+    }
+
+    @Override
+    public void postHandle(HttpServletRequest request, HttpServletResponse response, Object handler, ModelAndView modelAndView) throws Exception {
+        log.info("postHandle");
+    }
+
+    @Override
+    public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) throws Exception {
+        log.info("afterCompletion");
+    }
+}
+
+```
+
+
+
+## Spring Schedule 实现定时关单
+
+
+
+## Spring Schedule + Redis 分布式锁构建分布式任务调度
+
+
 
 
 
