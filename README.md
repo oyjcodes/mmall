@@ -16,7 +16,7 @@
 </tr>
 <tr>
 <td>二期项目</td>
-<td>Spring + SpringMVC + Mybatis + Nginx + vsftp + Redis + Jedis + Lombok + Jackson + Spring Schedule</td>
+<td>Spring + SpringMVC + Mybatis + Nginx + vsftp + Redis + Jedis + Lombok + Jackson + Spring Session(单点登陆) + Spring Schedule(定时任务) + Redisson(分布式锁)</td>
 </tr>
 
 </tbody>
@@ -1538,9 +1538,9 @@ Spring Schedule + Redis 分布式锁构建分布式任务调度（优化版本�
             String lockValueStr = RedisShardedPoolUtil.get(Const.REDIS_LOCK.CLOSE_ORDER_TASK_LOCK);
             if(lockValueStr != null && System.currentTimeMillis() > Long.parseLong(lockValueStr)){
                 String getSetResult = RedisShardedPoolUtil.getSet(Const.REDIS_LOCK.CLOSE_ORDER_TASK_LOCK,String.valueOf(System.currentTimeMillis()+lockTimeout));
-           //再次用当前时间戳getset。
-           //返回给定的key的最新旧值，与旧值判断；如果相等，说明该锁没有被修改过，是可以获取锁，进行关单操的；如果不使用StringUtils.equals(lockValueStr,getSetResult)判断的话，其它服务器上的定时任务线程都可以进来，还是会出现多个定时任务的执行
-           //当key没有旧值时，即key不存在时，可以获取锁，进行关单操作； getSetResult旧值为空的情况就是可能redis中的锁被认人为的手动删除了，或数据丢失了，死锁自然消失了，可以进行关单操作
+        //再次用当前时间戳getset。
+        //返回给定的key的最新旧值，与旧值判断；如果相等，说明该锁没有被修改过，是可以获取锁，进行关单操的；如果不使用StringUtils.equals(lockValueStr,getSetResult)判断的话，其它服务器上的定时任务线程都可以进来，还是会出现多个定时任务的执行
+        //当key没有旧值时，即key不存在时，可以获取锁，进行关单操作； getSetResult旧值为空的情况就是可能redis中的锁被认人为的手动删除了，或数据丢失了，死锁自然消失了，可以进行关单操作
                 if(getSetResult == null || (getSetResult != null && StringUtils.equals(lockValueStr,getSetResult))){
                     //真正获取到锁
                     closeOrder(Const.REDIS_LOCK.CLOSE_ORDER_TASK_LOCK);
@@ -1553,6 +1553,169 @@ Spring Schedule + Redis 分布式锁构建分布式任务调度（优化版本�
         }
         log.info("关闭订单定时任务结束");
     }
+```
+
+
+
+## 利用Redission可重入锁实现redis的分布式锁
+
+Spring Schedule + Redission 构建分布式任务调度
+
+1. Redission是架设在Redis基础上的一个Java驻内存数据网格（In-Memory Data Grid）
+
+2. Redissonz在基于NIO的Netty框架上，充分利用了Redis键值数据库提供的一系列优势
+
+3. 在Java实用工具包中常用接口的基础上，为使用者提供了一系列具有分布式特性的常用工具类
+
+### 概述
+
+分布式系统有一个著名的理论CAP，指在一个分布式系统中，最多只能同时满足一致性（Consistency）、可用性（Availability）和分区容错性（Partition tolerance）这三项中的两项。所以在设计系统时，往往需要权衡，在CAP中作选择。当然，这个理论也并不一定完美，不同系统对CAP的要求级别不一样，选择需要考虑方方面面。
+
+在微服务系统中，一个请求存在多级跨服务调用，往往需要牺牲强一致性老保证系统高可用，比如通过分布式事务，异步消息等手段完成。但还是有的场景，需要阻塞所有节点的所有线程，对共享资源的访问。比如并发时“超卖”和“余额减为负数”等情况。
+
+本地锁可以通过语言本身支持，要实现分布式锁，就必须依赖中间件，数据库、redis、zookeeper等。
+
+### 分布式锁特性
+
+不管使用什么中间件，有几点是实现分布式锁必须要考虑到的。
+
+- 互斥：互斥好像是必须的，否则怎么叫锁。
+- 死锁: 如果一个线程获得锁，然后挂了，并没有释放锁，致使其他节点(线程)永远无法获取锁，这就是死锁。分布式锁必须做到避免死锁。
+- 性能: 高并发分布式系统中，线程互斥等待会成为性能瓶颈，需要好的中间件和实现来保证性能。
+- 锁特性：考虑到复杂的场景，分布式锁不能只是加锁，然后一直等待。最好实现如Java Lock的一些功能如：锁判断，超时设置，可重入性等。
+
+### Redis实现之Redisson原理
+redission实现了JDK中的Lock接口，所以使用方式一样，只是Redssion的锁是分布式的。如下：
+
+```java
+    RLock lock = redisson.getLock("className");
+    lock.lock();
+    try {
+        // do sth.
+    } finally {
+        lock.unlock();
+    }
+```
+
+### 可重入锁（Reentrant Lock）
+
+基于Redis的Redisson分布式可重入锁RLock,Java对象实现了java.util.concurrent.locks.Lock接口。同时还提供了异步（Async）、反射式（Reactive）和RxJava2标准的接口。
+
+RLock lock = redisson.getLock("anyLock");
+// 最常见的使用方法
+lock.lock();
+
+如果负责储存这个分布式锁的Redisson节点宕机以后，而且这个锁正好处于锁住的状态时，这个锁会出现锁死的状态。为了避免这种情况的发生，Redisson内部提供了一个 "监控锁的看门狗"  ，它的作用是在Redisson实例被关闭前，不断的延长锁的有效期。默认情况下，看门狗的检查锁的超时时间是30秒钟，也可以通过修改Config.lockWatchdogTimeout来另行指定。
+
+另外Redisson还通过加锁的方法提供了leaseTime的参数来指定加锁的时间。超过这个时间后锁便自动解开了。
+
+```java
+// 加锁以后10秒钟自动解锁
+// 无需调用unlock方法手动解锁
+lock.lock(10, TimeUnit.SECONDS);
+
+// 尝试加锁，最多等待100秒，上锁以后10秒自动解锁
+boolean res = lock.tryLock(100, 10, TimeUnit.SECONDS);
+if (res) {
+   try {
+     ...
+   } finally {
+       lock.unlock();
+   }
+}
+
+```
+
+Redisson同时还为分布式锁提供了异步执行的相关方法：
+
+```java
+
+RLock lock = redisson.getLock("anyLock");
+lock.lockAsync();
+lock.lockAsync(10, TimeUnit.SECONDS);
+Future<Boolean> res = lock.tryLockAsync(100, 10, TimeUnit.SECONDS);
+```
+
+RLock对象完全符合Java的Lock规范。也就是说只有拥有锁的进程才能解锁，其他进程解锁则会抛出IllegalMonitorStateException错误。但是如果遇到需要其他进程也能解锁的情况，请使用分布式信号量Semaphore 对象.
+
+
+## 定时任务V4版
+
+```java
+    @Scheduled(cron="0 */1 * * * ?")
+    public void closeOrderTaskV4(){
+        RLock lock = redissonManager.getRedisson().getLock(Const.REDIS_LOCK.CLOSE_ORDER_TASK_LOCK);
+        boolean getLock = false;
+        try {
+            //0:尝试获取锁时的等待时间：0秒   50：获取锁后50秒后自动释放
+            if(getLock = lock.tryLock(0,50, TimeUnit.SECONDS)){
+                log.info("Redisson获取到分布式锁:{},ThreadName:{}",Const.REDIS_LOCK.CLOSE_ORDER_TASK_LOCK,Thread.currentThread().getName());
+                int hour = Integer.parseInt(PropertiesUtil.getProperty("close.order.task.time.hour","2"));
+                //iOrderService.closeOrder(hour);
+            }else{
+                log.info("Redisson没有获取到分布式锁:{},ThreadName:{}",Const.REDIS_LOCK.CLOSE_ORDER_TASK_LOCK,Thread.currentThread().getName());
+            }
+        } catch (InterruptedException e) {
+            log.error("Redisson分布式锁获取异常",e);
+        } finally {
+            if(!getLock){
+                return;
+            }
+            lock.unlock();
+            log.info("Redisson分布式锁释放锁");
+        }
+    }
+```
+
+### Redission配置,不知此redis分片
+
+```java
+package com.mmall.common;
+
+import com.mmall.util.PropertiesUtil;
+import lombok.extern.slf4j.Slf4j;
+import org.redisson.Redisson;
+import org.redisson.config.Config;
+import org.springframework.stereotype.Component;
+
+import javax.annotation.PostConstruct;
+
+/**
+ * Created by oyj
+ */
+@Component
+@Slf4j
+public class RedissonManager {
+
+    private Config config = new Config();
+
+    private Redisson redisson = null;
+
+    public Redisson getRedisson() {
+        return redisson;
+    }
+
+    private static String redis1Ip = PropertiesUtil.getProperty("redis1.ip");
+    private static Integer redis1Port = Integer.parseInt(PropertiesUtil.getProperty("redis1.port"));
+    private static String redis2Ip = PropertiesUtil.getProperty("redis2.ip");
+    private static Integer redis2Port = Integer.parseInt(PropertiesUtil.getProperty("redis2.port"));
+
+    @PostConstruct
+    private void init(){
+        try {
+            //单服务
+            config.useSingleServer().setAddress(new StringBuilder().append(redis1Ip).append(":").append(redis1Port).toString());
+
+            redisson = (Redisson) Redisson.create(config);
+
+            log.info("初始化Redisson结束");
+        } catch (Exception e) {
+            log.error("redisson init error",e);
+        }
+    }
+}
+
+
 ```
 
 
