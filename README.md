@@ -1651,7 +1651,7 @@ RLock对象完全符合Java的Lock规范。也就是说只有拥有锁的进程�
             if(getLock = lock.tryLock(0,50, TimeUnit.SECONDS)){
                 log.info("Redisson获取到分布式锁:{},ThreadName:{}",Const.REDIS_LOCK.CLOSE_ORDER_TASK_LOCK,Thread.currentThread().getName());
                 int hour = Integer.parseInt(PropertiesUtil.getProperty("close.order.task.time.hour","2"));
-                //iOrderService.closeOrder(hour);
+                iOrderService.closeOrder(hour);
             }else{
                 log.info("Redisson没有获取到分布式锁:{},ThreadName:{}",Const.REDIS_LOCK.CLOSE_ORDER_TASK_LOCK,Thread.currentThread().getName());
             }
@@ -1667,22 +1667,13 @@ RLock对象完全符合Java的Lock规范。也就是说只有拥有锁的进程�
     }
 ```
 
-### Redission配置,不知此redis分片
+等待时间waitTime设置为0 ，否者会出现多个定时认任务都启动。
+扩展：redis从数据库是只读的。如果配置主从复制，则单点登陆中的redis分片就会出现问题。
+
+
+### Redission配置,不支持redis分片
 
 ```java
-package com.mmall.common;
-
-import com.mmall.util.PropertiesUtil;
-import lombok.extern.slf4j.Slf4j;
-import org.redisson.Redisson;
-import org.redisson.config.Config;
-import org.springframework.stereotype.Component;
-
-import javax.annotation.PostConstruct;
-
-/**
- * Created by oyj
- */
 @Component
 @Slf4j
 public class RedissonManager {
@@ -1717,7 +1708,6 @@ public class RedissonManager {
 
 
 ```
-
 
 
 
@@ -2012,6 +2002,37 @@ public class ServerResponse<T> implements Serializable {
 
 }
 
+```
+
+## 自动化脚本发布
+
+```shell
+echo "===========进入git项目mmall目录=============" 
+cd /dev/git-repository/mmall 
+echo "==========git切换分之到mmall-v2.0===============" 
+git checkout mmall-v2.0 
+echo "==================git fetch======================" 
+git fetch 
+echo "==================git pull======================" 
+git pull 
+echo "===========编译并跳过单元测试====================" 
+mvn clean package -Dmaven.test.skip=true 
+echo "============删除旧的ROOT.war===================" 
+rm /dev/apache-tomcat-7.0.73/webapps/ROOT.war 
+echo "======拷贝编译出来的war包到tomcat下-ROOT.war=======" 
+cp /dev/git-repository/mmall/target/mmall.war /dev/setup/apache-tomcat-7.0.73/webapps/ROOT.war 
+echo "============删除tomcat下旧的ROOT文件夹=============" 
+rm -rf /dev/apache-tomcat-7.0.73/webapps/ROOT 
+echo "====================关闭tomcat=====================" 
+/dev/apache-tomcat-7.0.73/bin/shutdown.sh 
+echo "================sleep 10s=========================" 
+for i in {1..10} 
+do 
+   	echo $i"s" 
+   	sleep 1s 
+done 
+echo "====================启动tomcat=====================" 
+/dev/apache-tomcat-7.0.73/bin/startup.sh
 
 ```
 
