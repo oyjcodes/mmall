@@ -1408,25 +1408,152 @@ OrderServiceImp.java
 
 ```
 
-## 定时任务V1版
+## 定时任务V1版（集群环境下不采取）
+问题：V1版本中这个定时任务会在多个Tomcat服务器上执行多次，但我只希望在TOMCAT集群环境下,一个服务执行就可以了,并不需要大家都来执行它,因为如果大家一起执行的话,也浪费了MYSQL和服务器的一个性能,因为其他机器不需要执行,只执行一台就行,第二个就很容易造成数据错乱,因为大家都在执行SQL语句。
 
 ```java
-    //每1分钟(每个1分钟的整数倍)
-//    @Scheduled(cron="0 */1 * * * ?")
-//    public void closeOrderTaskV1(){
-//        log.info("关闭订单的定时任务  启动");
-//        int hour = Integer.parseInt(PropertiesUtil.getProperty("close.order.task.time.hour","2"));
-//        //对从当前时间之前 超过2个小时未支付的订单进行取消操作
-//        iOrderService.closeOrder(hour);
-//        log.info("关闭订单定时任务    结束");
-//    }
+   //每1分钟执行一次(每个1分钟的整数倍)
+   @Scheduled(cron="0 */1 * * * ?")
+   public void closeOrderTaskV1(){
+       log.info("关闭订单的定时任务  启动");
+       int hour = Integer.parseInt(PropertiesUtil.getProperty("close.order.task.time.hour","2"));
+       //对从当前时间之前 超过2个小时未支付的订单进行取消操作
+       iOrderService.closeOrder(hour);
+       log.info("关闭订单定时任务    结束");
+   }
 
 ```
 
 
+
+### 如何确保在tomcat集群环境下，关单的定时任务只进行一次？
+
+这里我们就要使用Redis分布式锁，需要解决的是Redis分布式如何预防死锁？也学会了多进程Debug的能力
+
 ## Spring Schedule + Redis 分布式锁构建分布式任务调度
 
+### Redis分布式锁构建的主要命令(都具有原子性)
 
+- setnx (SET if Not eXists): 先判断是否存在某个key值，如果不存在就设置值
+  返回整数，具体为:1，当 key 的值被设置; 0，当 key 的值没被设置
+
+- getset ：得到旧值，设置新值
+- expire : 设置键的有效期
+- del ： 删除
+
+
+<img src="./img/redis分布式锁1.jpg">
+
+
+
+## 定时任务V2版（容易造成死锁）
+Spring Schedule + Redis 分布式锁构建分布式任务调度，redis中存储的是 {key : CLOSE_ORDER_TASK_LOCK，value: 锁的时间失效时间} 这里为了进行多进程Debug调试，特意设置lock.timeout，锁时间为50s,但是实际的生产环境下，时间不会这么大，上线时间改为5秒
+s
+
+<img src="./img/redis分布式锁2.png"><br/>
+
+```java
+    @Scheduled(cron="0 */1 * * * ?")
+    public void closeOrderTaskV2(){
+        log.info("关闭订单定时任务启动");
+        long lockTimeout = Long.parseLong(PropertiesUtil.getProperty("lock.timeout","5000"));
+        //设置锁,即往reids中设置 {key : CLOSE_ORDER_TASK_LOCK，value: 锁的时间失效时间}  这里的value在V2版本中没有使用到，是在V3中用到的
+        Long setnxResult = RedisShardedPoolUtil.setnx(Const.REDIS_LOCK.CLOSE_ORDER_TASK_LOCK,String.valueOf(System.currentTimeMillis()+lockTimeout));
+        if(setnxResult != null && setnxResult.intValue() == 1){
+            //如果返回值是1，代表设置成功，获取锁
+            closeOrder(Const.REDIS_LOCK.CLOSE_ORDER_TASK_LOCK);
+        }else{
+            log.info("没有获得分布式锁:{}",Const.REDIS_LOCK.CLOSE_ORDER_TASK_LOCK);
+        }
+        log.info("关闭订单定时任务结束");
+    }
+
+
+    private void closeOrder(String lockName){
+        //注意要为 锁 设置有效期：5秒，防止死锁，如果不设置有效期，着该锁永远不会释放，通过ttl命令查看锁的存活时间，返回-1：永久存在
+        RedisShardedPoolUtil.expire(lockName,5);
+
+        log.info("获取{},ThreadName:{}", Const.REDIS_LOCK.CLOSE_ORDER_TASK_LOCK,Thread.currentThread().getName());
+        int hour = Integer.parseInt(PropertiesUtil.getProperty("close.order.task.time.hour","2"));
+
+        //调用service层的关单方法
+        iOrderService.closeOrder(hour);
+
+        //关单完毕后，及时删除锁
+        RedisShardedPoolUtil.del(Const.REDIS_LOCK.CLOSE_ORDER_TASK_LOCK);
+        log.info("释放{},ThreadName:{}",Const.REDIS_LOCK.CLOSE_ORDER_TASK_LOCK,Thread.currentThread().getName());
+        log.info("===============================");
+    }
+
+```
+
+
+这个V2版本的redis分布式锁是存在缺陷的，当tomcatA执行到setnx()方法的时候，如果这个时候从新启动了tomcatA服务器，则closeorder（）方法不会被调用，即该锁的失效时间没有设置，于是当tomcatB服务器或其它进程执行订单关闭任务时，setResult的返回值为0（该锁为永久生存，一直存在），于是其它进程永远不会获得这个定时任务锁，造成死锁。
+
+### 如果进程进入死锁，如何解决？
+
+- 暴力的方式
+
+  直接将tomcat的进程kill,但是这无法根本解决问题，redis中的锁还是存在，且有效期为永久，当从新启动新的服务时，setnxResult的值永远是0，表明锁已经存在，还是会死锁。
+
+- 温柔一点的方式
+
+  调用tomcat的shutdown方法。当调用shutdown方法时，tomcat容器会在关闭tomcat前调用preDestroy注解的方法。弊端：但是如果这里要关闭的锁特别多的话，这个delLock执行方法的时间会非常的长。
+
+```java
+    @PreDestroy
+    public void delLock(){
+        RedisShardedPoolUtil.del(Const.REDIS_LOCK.CLOSE_ORDER_TASK_LOCK);
+    }
+```
+
+
+## 定时任务V3版（推荐）即使某一个服务器执行定时任务出现问题没有设置锁的有效期，我们还是通过时间戳来判断锁是否已经失效，如果超时失效了，就可以从新获取锁，从而进行重新的设值。
+
+Spring Schedule + Redis 分布式锁构建分布式任务调度（优化版本，双重防死锁），利用{key : CLOSE_ORDER_TASK_LOCK，value: 锁的时间失效时间}中的时间戳：value值
+
+
+<img src="./img/redis分布式锁3.jpg"><br/>
+
+
+假设A,B两个服务器自动执行定时关单任务，所谓的双重预防死锁，主要针对两种情景下都能预防死锁。
+
+情景1：当A服务器上的定时任务执行，但还未设执行关闭订单的函数（包含对锁的有效期设置，以及关单后，对锁的删除），这时当B线程进行关单任务调度时，发现时间大于锁的value失效值，即使该锁没有正常释放，生命周期为永久（V2中的异常），但此时B线程是有权利获取锁的，但由于A服务器对锁没有释放，可以通过设置新锁值前获取的旧锁值和之前获取的锁值相比较，如果相等，则说明该锁没有被改变，我们可以对订单进行关单的操作。
+
+
+情景2：当A服务器上的定时任务执行，锁还没来的及关闭，这时当B线程进行关单任务调度时，发现时间大于锁的value失效值，证明此时B线程是有权利获取锁的，但这时候由于其它服务器执行定时任务将锁释放了，之前获取的锁值为空，但我们还是可以对订单进行关单的操作。
+
+
+
+```java
+    @Scheduled(cron="0 */1 * * * ?")
+    public void closeOrderTaskV3(){
+        log.info("关闭订单定时任务启动");
+        long lockTimeout = Long.parseLong(PropertiesUtil.getProperty("lock.timeout","5000"));
+        Long setnxResult = RedisShardedPoolUtil.setnx(Const.REDIS_LOCK.CLOSE_ORDER_TASK_LOCK,String.valueOf(System.currentTimeMillis()+lockTimeout));
+        if(setnxResult != null && setnxResult.intValue() == 1){
+            closeOrder(Const.REDIS_LOCK.CLOSE_ORDER_TASK_LOCK);
+        }else{
+            //未获取到锁，继续判断，判断时间戳，看是否可以重置并获取到锁（这里是增强的部分）
+            String lockValueStr = RedisShardedPoolUtil.get(Const.REDIS_LOCK.CLOSE_ORDER_TASK_LOCK);
+            if(lockValueStr != null && System.currentTimeMillis() > Long.parseLong(lockValueStr)){
+                String getSetResult = RedisShardedPoolUtil.getSet(Const.REDIS_LOCK.CLOSE_ORDER_TASK_LOCK,String.valueOf(System.currentTimeMillis()+lockTimeout));
+           //再次用当前时间戳getset。
+           //返回给定的key的最新旧值，与旧值判断；如果相等，说明该锁没有被修改过，是可以获取锁，进行关单操的；如果不使用StringUtils.equals(lockValueStr,getSetResult)判断的话，其它服务器上的定时任务线程都可以进来，还是会出现多个定时任务的执行
+           //当key没有旧值时，即key不存在时，可以获取锁，进行关单操作； getSetResult旧值为空的情况就是可能redis中的锁被认人为的手动删除了，或数据丢失了，死锁自然消失了，可以进行关单操作
+                if(getSetResult == null || (getSetResult != null && StringUtils.equals(lockValueStr,getSetResult))){
+                    //真正获取到锁
+                    closeOrder(Const.REDIS_LOCK.CLOSE_ORDER_TASK_LOCK);
+                }else{
+                    log.info("没有获取到分布式锁:{}",Const.REDIS_LOCK.CLOSE_ORDER_TASK_LOCK);
+                }
+            }else{
+                log.info("没有获取到分布式锁:{}",Const.REDIS_LOCK.CLOSE_ORDER_TASK_LOCK);
+            }
+        }
+        log.info("关闭订单定时任务结束");
+    }
+```
 
 
 
