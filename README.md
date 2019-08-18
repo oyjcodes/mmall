@@ -81,6 +81,92 @@
 
 3. 除了主动轮询，也可以通过接受异步通知获得支付结果，详见扫码异步通知，注意一定要对异步通知做验签，确保通知是支付宝发出的。
 
+### 代码实现
+```java
+    //前台调用支付的接口，返回支付二维码的ftp服务器地址，前台进行显示
+    @RequestMapping("pay.do")
+    @ResponseBody
+    public ServerResponse pay(HttpServletRequest httpServletRequest, Long orderNo, HttpServletRequest request) {
+        String loginToken = CookieUtil.readLoginToken(httpServletRequest);
+        if(StringUtils.isEmpty(loginToken)){
+            return ServerResponse.createByErrorMessage("用户未登录，无法获取当前用户的信息");
+        }
+        String userStrObj = RedisShardedPoolUtil.get(loginToken);
+        User user = JsonUtil.string2Obj(userStrObj, User.class);
+        if (user == null) {
+            return ServerResponse.createByErrorCodeMessage(ResponseCode.NEED_LOGIN.getCode(), ResponseCode.NEED_LOGIN.getDesc());
+        }
+        String path = request.getSession().getServletContext().getRealPath("upload");
+        return iOrderService.pay(orderNo, user.getId(), path);
+    }
+
+    //支付宝异步回调的系统接口（异步调用即不管前台有没有扫码支付，支付宝都会调用这个回调接口，不会等着用户扫码之后才调用）
+    //支付宝回调的信息都在request域当中
+    @RequestMapping("alipay_callback.do")
+    @ResponseBody
+    public Object alipayCallback(HttpServletRequest request){
+        Map<String,String> params = Maps.newHashMap();
+
+        Map requestParams = request.getParameterMap();
+        for(Iterator iter = requestParams.keySet().iterator();iter.hasNext();){
+            String name = (String)iter.next();
+            String[] values = (String[]) requestParams.get(name);
+            String valueStr = "";
+            for(int i = 0 ; i <values.length;i++){
+
+                valueStr = (i == values.length -1)?valueStr + values[i]:valueStr + values[i]+",";
+            }
+            params.put(name,valueStr);
+        }
+        logger.info("支付宝回调,sign:{},trade_status:{},参数:{}",params.get("sign"),params.get("trade_status"),params.toString());
+
+        //非常重要,验证回调的正确性,是不是支付宝发的.并且呢还要避免重复通知.
+
+        params.remove("sign_type");
+        try {
+            boolean alipayRSACheckedV2 = AlipaySignature.rsaCheckV2(params, Configs.getAlipayPublicKey(),"utf-8",Configs.getSignType());
+
+            if(!alipayRSACheckedV2){
+                return ServerResponse.createByErrorMessage("非法请求,验证不通过,再恶意请求我就报警找网警了");
+            }
+        } catch (AlipayApiException e) {
+            logger.error("支付宝验证回调异常",e);
+        }
+
+        //是支付宝的回调
+        //todo 验证各种数据
+
+        ServerResponse serverResponse = iOrderService.aliCallback(params);
+        if(serverResponse.isSuccess()){
+            //操作完成后，一定要要向支付宝返回成功，否者支付宝会重复的对系统的回调地址进行调用
+            return Const.AlipayCallback.RESPONSE_SUCCESS;
+        }
+        return Const.AlipayCallback.RESPONSE_FAILED;
+    }
+
+    //前台通过调用这个地址，查询订单是否支付成功，如果支付成功，会进行相应的指引
+    @RequestMapping("query_order_pay_status.do")
+    @ResponseBody
+    public ServerResponse<Boolean> queryOrderPayStatus(HttpServletRequest httpServletRequest, Long orderNo){
+        String loginToken = CookieUtil.readLoginToken(httpServletRequest);
+        if(StringUtils.isEmpty(loginToken)){
+            return ServerResponse.createByErrorMessage("用户未登录，无法获取当前用户的信息");
+        }
+        String userStrObj = RedisShardedPoolUtil.get(loginToken);
+        User user = JsonUtil.string2Obj(userStrObj, User.class);
+        if(user ==null){
+            return ServerResponse.createByErrorCodeMessage(ResponseCode.NEED_LOGIN.getCode(),ResponseCode.NEED_LOGIN.getDesc());
+        }
+
+        ServerResponse serverResponse = iOrderService.queryOrderPayStatus(user.getId(),orderNo);
+        if(serverResponse.isSuccess()){
+            return ServerResponse.createBySuccess(true);
+        }
+        return ServerResponse.createBySuccess(false);
+    }
+
+```
+
 ## Nginx 配置
 - 在nginx配置的 `conf` 文件夹下创建 `vhost` 文件 并在 `conf` 下的 `nginx.conf` 文件中加入 `include vhost/*.conf;`
 
