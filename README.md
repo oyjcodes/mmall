@@ -1084,8 +1084,6 @@ public class JsonUtil {
 
 将 Cookie 写在二级域名 happymmall.com 下，即 三级域名 xxx.happymmall.com 都能访问到这二级域名 Cookie。(以后做微服务可以把用户模块单独设置一个域，user.happymmall.com)
 
-然后通过 www.happymmall.com 来访问
-
 
 ![流程图](./img/单点登录2.png)
 
@@ -1152,7 +1150,7 @@ web.xml
 ### 测试
 先访问 login.do ，然后 ttl 查看剩余时间，然后随便访问一个 .do 请求（因为拦截的是所有 .do 请求，然后重置时间），再 ttl 查看，发现重置时间了，成功~！
 
-<img src="./img/session过期.png">
+<img src="./img/Session过期.png">
 
 
 ## 集群环境下Guava Cache 迁移到 redis实现重置密码接口
@@ -1305,6 +1303,125 @@ public class JedisConnectionFactory implements InitializingBean, DisposableBean,
 
 ## Spring Schedule 实现定时关单
 
+### Corn表达式
+
+<img src="./img/corn1.jpg">
+
+<img src="./img/corn2.jpg">
+
+### MySQL的行、表锁
+
+关单过程中（涉及到mysql的行锁和表锁问题），项目中关单操作采用 "悲观锁" select ...... for update
+
+Row-Level-Lock(明确的主键：行锁) 、Table-Level-Lock(无明确的主键：表锁)
+
+### 行锁
+
+<img src="./img/行锁.jpg">
+
+### 无锁
+
+<img src="./img/无锁.jpg">
+
+### 表锁
+
+<img src="./img/表锁1.jpg"><br/>
+<img src="./img/表锁2.jpg"><br/>
+<img src="./img/表锁3.jpg"><br/>
+
+
+### 代码实现
+
+OrderServiceImp.java
+
+```java
+  @Override
+    public void closeOrder(int hour) {
+        Date dataCloseTime = DateUtils.addHours(new Date(), -hour);
+        List<Order> orderList = orderMapper.selectOrderStatusByCreateTime(Const.OrderStatusEnum.NO_PAY.getCode(), DataTimeUtil.dateToStr(dataCloseTime));
+        for(Order order : orderList){
+            List<OrderItem> orderItemList = orderItemMapper.getByOrderNo(order.getOrderNo());
+            for(OrderItem orderItem : orderItemList){
+
+                //一定要用主键where条件，防止锁表。同时必须是支持MySQL的InnoDB
+                Integer stock = productMapper.selectStockByProductId(orderItem.getProductId());
+
+                //考虑到已生成的订单里的商品，被删除的情况，这个商品没有了，就不用更新库存了
+                if(stock == null){
+                    //结束本次循环
+                    continue;
+                }
+
+                Product product = new Product();
+                product.setId(orderItem.getProductId());
+                product.setStock(stock+orderItem.getQuantity());
+                //更新该商品的库存
+                productMapper.updateByPrimaryKeySelective(product);
+            }
+            orderMapper.closeOrderByOrderId(order.getId());
+            log.info("关闭订单OrderNo：{}",order.getOrderNo());
+        }
+
+    }
+```
+
+查询在date日期之前但status还是未付款状态的订单
+
+```sql
+ 
+  <select id="selectOrderStatusByCreateTime" resultMap="BaseResultMap" parameterType="map">
+    SELECT
+    <include refid="Base_Column_List"/>
+    from mmall_order
+    where status = #{status}
+    <![CDATA[
+    and create_time <= #{date}
+    ]]>
+    order by create_time desc
+  </select>
+
+```
+
+查询订单的具体商品信息
+
+```sql
+
+  <select id="getByOrderNo" parameterType="map" resultMap="BaseResultMap">
+    SELECT
+    <include refid="Base_Column_List"/>
+    from mmall_order_item
+    where order_no = #{orderNo}
+  </select>
+
+```
+查询每一个具体商品库存数量，这里用到了 "悲观锁"，在查询库存数量时，进行加锁
+
+```sql
+
+  <select id="selectStockByProductId" resultType="int" parameterType="java.lang.Integer">
+    select
+    stock
+    from mmall_product
+    where id = #{id}
+    for update
+  </select>
+
+```
+
+## 定时任务V1版
+
+```java
+    //每1分钟(每个1分钟的整数倍)
+//    @Scheduled(cron="0 */1 * * * ?")
+//    public void closeOrderTaskV1(){
+//        log.info("关闭订单的定时任务  启动");
+//        int hour = Integer.parseInt(PropertiesUtil.getProperty("close.order.task.time.hour","2"));
+//        //对从当前时间之前 超过2个小时未支付的订单进行取消操作
+//        iOrderService.closeOrder(hour);
+//        log.info("关闭订单定时任务    结束");
+//    }
+
+```
 
 
 ## Spring Schedule + Redis 分布式锁构建分布式任务调度
