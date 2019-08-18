@@ -969,7 +969,114 @@ public ServerResponse<User> login(String username, String password, HttpSession 
     }
 ```
 
+```java
 
+/**
+ * Created by oyj
+ * 使用jackson工具包封装序列化工具
+ */
+@Slf4j
+public class JsonUtil {
+
+    private static ObjectMapper objectMapper = new ObjectMapper();
+    static{
+
+        //以下是对象转序列化字符串的设置
+
+        //对象的所有字段全部列入
+        objectMapper.setSerializationInclusion(Inclusion.ALWAYS);
+
+        //取消默认转换timestamps形式
+        objectMapper.configure(SerializationConfig.Feature.WRITE_DATES_AS_TIMESTAMPS,false);
+
+        //忽略空Bean转json的错误
+        objectMapper.configure(SerializationConfig.Feature.FAIL_ON_EMPTY_BEANS,false);
+
+        //所有的日期格式都统一为以下的样式，即yyyy-MM-dd HH:mm:ss
+        objectMapper.setDateFormat(new SimpleDateFormat(DataTimeUtil.STANDARD_FORMAT));
+
+
+        //以下是序列化字符串转对象的设置
+
+        //忽略 在json字符串中存在，但是在java对象中不存在对应属性的情况。防止错误
+        objectMapper.configure(DeserializationConfig.Feature.FAIL_ON_UNKNOWN_PROPERTIES,false);
+    }
+
+
+
+    //对象序列化
+    public static <T> String obj2String(T obj){
+        if(obj == null){
+            return null;
+        }
+        try {
+            return obj instanceof String ? (String)obj :  objectMapper.writeValueAsString(obj);
+        } catch (Exception e) {
+            log.warn("Parse Object to String error",e);
+            return null;
+        }
+    }
+
+    //返回一个格式好的字符串
+    public static <T> String obj2StringPretty(T obj){
+        if(obj == null){
+            return null;
+        }
+        try {
+            return obj instanceof String ? (String)obj :  objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(obj);
+        } catch (Exception e) {
+            log.warn("Parse Object to String error",e);
+            return null;
+        }
+    }
+
+
+    //反序列化
+
+    /**
+     * Class<T>代表这个类型所对应的类 String.class 是Class<String> 类型的
+     *
+     */
+    public static <T> T string2Obj(String str,Class<T> clazz){
+        if(StringUtils.isEmpty(str) || clazz == null){
+            return null;
+        }
+
+        try {
+            return clazz.equals(String.class)? (T)str : objectMapper.readValue(str,clazz);
+        } catch (Exception e) {
+            log.warn("Parse String to Object error",e);
+            return null;
+        }
+    }
+
+
+
+    public static <T> T string2Obj(String str, TypeReference<T> typeReference){
+        if(StringUtils.isEmpty(str) || typeReference == null){
+            return null;
+        }
+        try {
+            return (T)(typeReference.getType().equals(String.class)? str : objectMapper.readValue(str,typeReference));
+        } catch (Exception e) {
+            log.warn("Parse String to Object error",e);
+            return null;
+        }
+    }
+
+
+    public static <T> T string2Obj(String str,Class<?> collectionClass,Class<?>... elementClasses) {
+        JavaType javaType = objectMapper.getTypeFactory().constructParametricType(collectionClass, elementClasses);
+        try {
+            return objectMapper.readValue(str, javaType);
+        } catch (Exception e) {
+            log.warn("Parse String to Object error", e);
+            return null;
+        }
+    }
+
+
+```
 
 ### 解决 SessionId 在多个 Tomcat 不一致问题：使用 Cookie 保存 SessionId
 
@@ -1112,41 +1219,155 @@ web.xml
 3. 默认采用外置的redis来存储session数据，以此来解决session共享的问题。
 
 
+在web.xml文件中添加一个session代理filter，这个filter要放在所有的filter链最前面
+
+```xml
+    <!--使用SpringSession实现单点登陆-->
+    <filter>
+        <filter-name>springSessionRepositoryFilter</filter-name>-->
+        <filter-class>org.springframework.web.filter.DelegatingFilterProxy</filter-class>
+    </filter>
+    <filter-mapping>
+        <filter-name>springSessionRepositoryFilter</filter-name>
+        <url-pattern>*.do</url-pattern>
+    </filter-mapping>
+```
+在applicationContext-spring-session.xml中添加如下信息
+
+```xml
+ <bean id="redisHttpSessionConfiguration" class="org.springframework.session.data.redis.config.annotation.web.http.RedisHttpSessionConfiguration">
+        <property name="maxInactiveIntervalInSeconds" value="1800" />
+    </bean>
+
+    <bean id="defaultCookieSerializer" class="org.springframework.session.web.http.DefaultCookieSerializer">
+        <property name="domainName" value=".happymmall.com" />
+        <property name="useHttpOnlyCookie" value="true" />
+        <property name="cookiePath" value="/" />
+        <property name="cookieMaxAge" value="31536000" />
+    </bean>
+
+    <bean id="jedisPoolConfig" class="redis.clients.jedis.JedisPoolConfig">
+        <property name="maxTotal" value="20"/>
+    </bean>
+
+    <bean id="jedisConnectionFactory" class="org.springframework.data.redis.connection.jedis.JedisConnectionFactory">
+        <property name="hostName" value="127.0.0.1" />
+        <property name="port" value="6379" />
+        <property name="poolConfig" ref="jedisPoolConfig" />
+    </bean>
+
+```
+
+查看jedisConnectionFactory.java源码,发现其不支持JedisShardInfo多分片策略，因此无法使用分布式redis存储session信息
+
+```java
+public class JedisConnectionFactory implements InitializingBean, DisposableBean, RedisConnectionFactory {
+    private static final Log log = LogFactory.getLog(JedisConnectionFactory.class);
+    private static final ExceptionTranslationStrategy EXCEPTION_TRANSLATION = new PassThroughExceptionTranslationStrategy(JedisConverters.exceptionConverter());
+    private static final Method SET_TIMEOUT_METHOD;
+    private static final Method GET_TIMEOUT_METHOD;
+    private JedisShardInfo shardInfo;
+    ...
+    public JedisConnectionFactory(JedisShardInfo shardInfo) {
+        this.hostName = "localhost";
+        this.port = 6379;
+        this.timeout = 2000;
+        this.usePool = true;
+        this.poolConfig = new JedisPoolConfig();
+        this.dbIndex = 0;
+        this.convertPipelineAndTxResults = true;
+        this.shardInfo = shardInfo;
+    }
+}
+```
+使用SpringSession后的登陆代码，与一期一模一样，可见这样实现单点登陆对业务的入侵程度非常小
+
+```java
+
+    @RequestMapping(value = "login.do",method = RequestMethod.GET)
+    @ResponseBody
+    public ServerResponse<User> login(String username, String password, HttpSession session, HttpServletResponse httpServletResponse){
+
+        ServerResponse<User> response = iUserService.login(username,password);
+        if(response.isSuccess()){
+
+            session.setAttribute(Const.CURRENT_USER,response.getData());
+//            CookieUtil.writeLoginToken(httpServletResponse,session.getId());
+//            RedisShardedPoolUtil.setEx(session.getId(), JsonUtil.obj2String(response.getData()),Const.RedisCacheExtime.REDIS_SESSION_EXTIME);
+
+        }
+        return response;
+    }
+
+```
 
 
-## SpringMVC 全局异常
 
-
-<img src="https://raw.githubusercontent.com/xiehanghang/mmall/master/README-img/SpringMVC%E5%85%A8%E5%B1%80%E5%BC%82%E5%B8%B81.png">
-
-
-
-<img src="https://raw.githubusercontent.com/xiehanghang/mmall/master/README-img/SpringMVC%E5%85%A8%E5%B1%80%E5%BC%82%E5%B8%B82.png">
+## Spring Schedule 实现定时关单
 
 
 
-项目细节会被看到
+## Spring Schedule + Redis 分布式锁构建分布式任务调度
 
 
 
-<img src="https://raw.githubusercontent.com/xiehanghang/mmall/master/README-img/SpringMVC%E5%85%A8%E5%B1%80%E5%BC%82%E5%B8%B83.png">
 
 
 
-### 扫描包隔离
+## 项目的安全配置
+
+### 无SpringMVC全局异常(不推荐)
+
+
+<img src="./img/非全局异常例子.png"><br/>
+
+网站最后部署，所有人都可以访问，无springmvc全局异常时，会将系统的相关信息暴露给客户端，比如包名、数据库sql语句、IP等系统信息，这就给那些心怀不轨的攻击者带来了可乘之机，十分的危险
+
+因此我们要对这些异常进行“包装”（使用ModelAndView进行包装）再返回给前端。
+
+<img src="./img/无全局异常.jpg"><br/>
+
+
+
+
+### SpringMVC全局异常(推荐采用)
+
+<img src="./img/全局异常例子.png"><br/>
+
+不同之处在于，当异常返回到DispatcherServlet前端控制器时，不再直接传递给前端，而是将这写异常信息传递给ExceptionResolver异常处理器，进行进一步的处理，在异常处理器中对这些异常进行 "包装"，最后将 "包装"的异常反馈给前端控制器，通过前端控制器返回给前端。这个异常对象是通过ModelAndView对象进行包装的。
+
+<img src="./img/全局异常.jpg"><br/>
+
+
+
+#### 包扫描隔离
 
 **交给 springmvc 来扫描 controller**
 
 只扫描 controller，关闭默认的扫描
 
+Spring扫描配置文件：applicationContext.xml中排除对Controller的扫描，将处理移交给SpringMVC的扫描配置文件
+
+```xml
+    <!--Spring的配置文件，需扫描控制器以外的文件-->
+    <context:component-scan base-package="com.mmall" annotation-config="true">
+        <context:exclude-filter type="annotation" expression="org.springframework.stereotype.Controller" />
+    </context:component-scan>
+
 ```
+SpringMVC扫描配置文件：dispatcher-Servlet.xml中 use-default-filters="false" 关闭默认的全局扫描，只扫描Controller
+
+```xml
 <!-- springmvc 扫描包指定到 controller，防止重复扫描 -->
     <context:component-scan base-package="com.mmall.controller" annotation-config="true" use-default-filters="false">
         <context:include-filter type="annotation" expression="org.springframework.stereotype.Controller"/>
     </context:component-scan>
 ```
 
-### 具体实现
+
+### 全局异常代码实现
+
+使用ExceptionResolver.java处理全局异常，涉及到日志的处理，项目基于前后端分离，所以需要将ModelAndView转化json格式返回给前端
 
 ```java
 @Slf4j
@@ -1155,10 +1376,11 @@ public class ExceptionResolver implements HandlerExceptionResolver{
 
     @Override
     public ModelAndView resolveException(HttpServletRequest httpServletRequest, HttpServletResponse httpServletResponse, Object o, Exception e) {
+        //打印日志，控制台输出****路径访问异常，但具体的异常信息只有到日志文件中才可以查看
         log.error("{} Exception",httpServletRequest.getRequestURI(),e);
         ModelAndView modelAndView = new ModelAndView(new MappingJacksonJsonView());
 
-        //当使用是jackson2.x的时候使用MappingJackson2JsonView，课程中使用的是1.9。
+        //当使用是jackson2.x的时候使用MappingJackson2JsonView
         modelAndView.addObject("status", ResponseCode.ERROR.getCode());
         modelAndView.addObject("msg","接口异常,详情请查看服务端日志的异常信息");
         modelAndView.addObject("data",e.toString());
@@ -1170,7 +1392,9 @@ public class ExceptionResolver implements HandlerExceptionResolver{
 
 
 
-## SpringMVC 实现权限统一校验
+## SpringMVC拦截器配置（实现后台管理员权限统一校验）
+
+<img src="./img/拦截器.jpg"><br/>
 
 解决问题：大量的重复代码：校验用户是否登录
 
@@ -1178,33 +1402,24 @@ public class ExceptionResolver implements HandlerExceptionResolver{
 <mvc:interceptors>
         <!-- 定义在这里的，所有的都会拦截-->
         <mvc:interceptor>
-            <!--manage/a.do  /manage/*-->
-            <!--manage/b.do  /manage/*-->
-            <!--manage/product/save.do /manage/**-->
-            <!--manage/order/detail.do /manage/**-->
             <mvc:mapping path="/manage/**"/>
-            <!--<mvc:exclude-mapping path="/manage/user/login.do"/>-->
             <bean class="com.mmall.controller.common.interceptor.AuthorityInterceptor" />
         </mvc:interceptor>
     </mvc:interceptors>
 ```
 
+### 拦截器代码实现
 
-
-### 具体拦截器实现
-
-```Java
-/**
- * Created by geely
- */
+```java
 @Slf4j
 public class AuthorityInterceptor implements HandlerInterceptor {
 
+    //preHandle:进入Controller之前被调用
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
         log.info("preHandle");
         //请求中Controller中的方法名
-        HandlerMethod handlerMethod = (HandlerMethod) handler;
+        HandlerMethod handlerMethod = (HandlerMethod)handler;
 
         //解析HandlerMethod
 
@@ -1215,68 +1430,68 @@ public class AuthorityInterceptor implements HandlerInterceptor {
         StringBuffer requestParamBuffer = new StringBuffer();
         Map paramMap = request.getParameterMap();
         Iterator it = paramMap.entrySet().iterator();
-        while (it.hasNext()) {
-            Map.Entry entry = (Map.Entry) it.next();
-            String mapKey = (String) entry.getKey();
+        while (it.hasNext()){
+            Map.Entry entry = (Map.Entry)it.next();
+            String mapKey = (String)entry.getKey();
 
             String mapValue = StringUtils.EMPTY;
 
             //request这个参数的map，里面的value返回的是一个String[]
             Object obj = entry.getValue();
-            if (obj instanceof String[]) {
-                String[] strs = (String[]) obj;
+            if(obj instanceof String[]){
+                String[] strs = (String[])obj;
                 mapValue = Arrays.toString(strs);
             }
             requestParamBuffer.append(mapKey).append("=").append(mapValue);
         }
 
-        if (StringUtils.equals(className, "UserManageController") && StringUtils.equals(methodName, "login")) {
-            log.info("权限拦截器拦截到请求,className:{},methodName:{},param:{}", className, methodName, requestParamBuffer);
+        if(StringUtils.equals(className,"UserManageController") && StringUtils.equals(methodName,"login")){
+            log.info("权限拦截器拦截到请求,className:{},methodName:{}",className,methodName);
             //如果是拦截到登录请求，不打印参数，因为参数里面有密码，全部会打印到日志中，防止日志泄露
             return true;
         }
 
-        log.info("权限拦截器拦截到请求,className:{},methodName:{},param:{}", className, methodName, requestParamBuffer.toString());
+        log.info("权限拦截器拦截到请求,className:{},methodName:{},param:{}",className,methodName,requestParamBuffer.toString());
 
 
         User user = null;
 
         String loginToken = CookieUtil.readLoginToken(request);
-        if (StringUtils.isNotEmpty(loginToken)) {
+        if(StringUtils.isNotEmpty(loginToken)){
             String userJsonStr = RedisShardedPoolUtil.get(loginToken);
             user = JsonUtil.string2Obj(userJsonStr, User.class);
         }
 
-        if (user == null || (user.getRole().intValue() != Const.Role.ROLE_ADMIN)) {
+        if(user == null || (user.getRole().intValue() != Const.Role.ROLE_ADMIN)){
             //返回false.即不会调用controller里的方法
-            response.reset();//geelynote 这里要添加reset，否则报异常 getWriter() has already been called for this response.
+            response.reset();// 这里要添加reset，否则报异常 getWriter() has already been called for this response.
             response.setCharacterEncoding("UTF-8");//geelynote 这里要设置编码，否则会乱码
-            response.setContentType("application/json;charset=UTF-8");// 这里要设置返回值的类型，因为全部是json接口。
+            response.setContentType("application/json;charset=UTF-8");//geelynote 这里要设置返回值的类型，因为全部是json接口。
 
             PrintWriter out = response.getWriter();
 
             //上传由于富文本的控件要求，要特殊处理返回值，这里面区分是否登录以及是否有权限
-            if (user == null) {
-                if (StringUtils.equals(className, "ProductManageController") && StringUtils.equals(methodName, "richtextImgUpload")) {
+            if(user == null){
+                if(StringUtils.equals(className,"ProductManageController") && StringUtils.equals(methodName,"richtextImgUpload")){
                     Map resultMap = Maps.newHashMap();
-                    resultMap.put("success", false);
-                    resultMap.put("msg", "请登录管理员");
+                    resultMap.put("success",false);
+                    resultMap.put("msg","请登录管理员");
                     out.print(JsonUtil.obj2String(resultMap));
-                } else {
+                }else{
                     out.print(JsonUtil.obj2String(ServerResponse.createByErrorMessage("拦截器拦截,用户未登录")));
                 }
-            } else {
-                if (StringUtils.equals(className, "ProductManageController") && StringUtils.equals(methodName, "richtextImgUpload")) {
+            }else{
+                if(StringUtils.equals(className,"ProductManageController") && StringUtils.equals(methodName,"richtextImgUpload")){
                     Map resultMap = Maps.newHashMap();
-                    resultMap.put("success", false);
-                    resultMap.put("msg", "无权限操作");
+                    resultMap.put("success",false);
+                    resultMap.put("msg","无权限操作");
                     out.print(JsonUtil.obj2String(resultMap));
-                } else {
+                }else{
                     out.print(JsonUtil.obj2String(ServerResponse.createByErrorMessage("拦截器拦截,用户无权限操作")));
                 }
             }
             out.flush();
-            out.close();//这里要关闭
+            out.close();//geelynote 这里要关闭
 
             return false;
 
@@ -1284,6 +1499,7 @@ public class AuthorityInterceptor implements HandlerInterceptor {
         return true;
     }
 
+    //postHandle:进入Controller之后被调用
     @Override
     public void postHandle(HttpServletRequest request, HttpServletResponse response, Object handler, ModelAndView modelAndView) throws Exception {
         log.info("postHandle");
@@ -1298,15 +1514,99 @@ public class AuthorityInterceptor implements HandlerInterceptor {
 ```
 
 
+### 注意simditor富文本上传的异常处理
 
-## Spring Schedule 实现定时关单
+由于后台使用了simditor（轻量级的web富文本编辑器），对于返回值有自己的要求，所以在使用拦截器针对富文本上传controller进行权限验证时，不是管理员进行上传时，就要按照规定返回Map对象 ，不能使用项目中通用的ServerResponse封装对象。
 
-
-
-## Spring Schedule + Redis 分布式锁构建分布式任务调度
-
+<img src="./img/simditor.jpg"><br/>
 
 
+
+## 高度封装可重用的返回类
+
+```java
+/**
+ * Created by geely
+ */
+@JsonSerialize(include =  JsonSerialize.Inclusion.NON_NULL)
+//保证序列化json的时候,如果是null的对象,key也会消失
+public class ServerResponse<T> implements Serializable {
+
+    private int status;
+    private String msg;
+    private T data;
+
+    private ServerResponse(int status){
+        this.status = status;
+    }
+    private ServerResponse(int status,T data){
+        this.status = status;
+        this.data = data;
+    }
+
+    private ServerResponse(int status,String msg,T data){
+        this.status = status;
+        this.msg = msg;
+        this.data = data;
+    }
+
+    private ServerResponse(int status,String msg){
+        this.status = status;
+        this.msg = msg;
+    }
+
+    @JsonIgnore
+    //使之不在json序列化结果当中
+    public boolean isSuccess(){
+        return this.status == ResponseCode.SUCCESS.getCode();
+    }
+
+    public int getStatus(){
+        return status;
+    }
+    public T getData(){
+        return data;
+    }
+    public String getMsg(){
+        return msg;
+    }
+
+
+    public static <T> ServerResponse<T> createBySuccess(){
+        return new ServerResponse<T>(ResponseCode.SUCCESS.getCode());
+    }
+
+    public static <T> ServerResponse<T> createBySuccessMessage(String msg){
+        return new ServerResponse<T>(ResponseCode.SUCCESS.getCode(),msg);
+    }
+
+    public static <T> ServerResponse<T> createBySuccess(T data){
+        return new ServerResponse<T>(ResponseCode.SUCCESS.getCode(),data);
+    }
+
+    public static <T> ServerResponse<T> createBySuccess(String msg,T data){
+        return new ServerResponse<T>(ResponseCode.SUCCESS.getCode(),msg,data);
+    }
+
+
+    public static <T> ServerResponse<T> createByError(){
+        return new ServerResponse<T>(ResponseCode.ERROR.getCode(),ResponseCode.ERROR.getDesc());
+    }
+
+
+    public static <T> ServerResponse<T> createByErrorMessage(String errorMessage){
+        return new ServerResponse<T>(ResponseCode.ERROR.getCode(),errorMessage);
+    }
+
+    public static <T> ServerResponse<T> createByErrorCodeMessage(int errorCode,String errorMessage){
+        return new ServerResponse<T>(errorCode,errorMessage);
+    }
+
+
+}
+
+
+```
 
 
 
